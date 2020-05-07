@@ -25,38 +25,33 @@ pub struct Image {
 
 
 impl Image {
-    pub fn new(width: usize, height: usize) -> Self {
+    fn new(width: usize, height: usize) -> Self {
         Image {
-            data: vec![Vec3::default(); width * height],
+            data: vec![vec3(0.1, 0.1, 0.1); width * height],
             width,
             height,
         }
     }
 
-    pub fn height(&self) -> usize {
-        self.height
-    }
-
-    pub fn width(&self) -> usize {
-        self.width
-    }
-
-    pub fn get(&self, col: usize, row: usize) -> Vec3 {
-        let index = row * self.width + col;
-        self.data[index]
-    }
-
-    pub fn set(&mut self, col: usize, row: usize, pixel: Vec3) {
+    #[inline(always)]
+    fn set(&mut self, col: usize, row: usize, pixel: Vec3) {
         let index = row * self.width + col;
         self.data[index] = pixel;
     }
 
-    pub fn data_mut(&mut self) -> &mut [Vec3] {
-        &mut self.data[..]
+    fn flip_horizontally(&mut self) {
+        for row in 0..((self.height + 1) / 2) {
+            let idx = row * self.width;
+            let bottom_idx = (self.height - row - 1) * self.width;
+            for col in 0..self.width {
+                self.data.swap(idx + col, bottom_idx + col);
+            }
+        }
     }
 
+
     // write as PPM
-    pub fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
+    fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
         writeln!(w, "P3")?; // means that colors are in ASCII
         writeln!(w, "{} {}", self.width, self.height)?;
         writeln!(w, "255")?; // max color value
@@ -75,10 +70,59 @@ impl Image {
     }
 }
 
-fn main() {
-    let mut image = Image::new(100, 100);
-    image.set(52, 41, vec3(1.0, 0.0, 0.0));
-    let file = File::create("out.ppm").unwrap();
-    let mut out = BufWriter::new(file);
-    image.write(&mut out).unwrap();
+struct Renderer {
+    target: Image
+}
+
+impl Renderer {
+    fn new(width: usize, height: usize) -> Self {
+        Renderer {
+            target: Image::new(width, height)
+        }
+    }
+
+    fn flip_horizontally(&mut self) {
+        self.target.flip_horizontally();
+    }
+
+    fn save(&self, path: &str) -> io::Result<()> {
+        let file = File::create(path)?;
+        let mut out = BufWriter::new(file);
+        self.target.write(&mut out)?;
+        Ok(())
+    }
+
+    fn set(&mut self, x: usize, y: usize, color: Vec3) {
+        self.target.set(x, y, color);
+    }
+
+    fn line(&mut self, (x0, y0): (usize, usize), (x1, y1): (usize, usize), color: Vec3) {
+        let mut t = 0.0f32;
+        loop {
+            let x = x0 as f32 + (x1 - x0) as f32 * t;
+            let y = y0 as f32 + (y1 - y0) as f32 * t;
+            self.set(x as usize, y as usize, color);
+
+            t += 0.01;
+            if t > 1.0 {
+                break;
+            }
+        }
+    }
+}
+
+fn white() -> Vec3 {
+    vec3(1.0, 1.0, 1.0)
+}
+
+fn red() -> Vec3 {
+    vec3(1.0, 0.0, 0.0)
+}
+
+fn main() -> io::Result<()> {
+    let mut renderer = Renderer::new(100, 100);
+    renderer.line((13, 20), (80, 40), white());
+    renderer.flip_horizontally();
+    renderer.save("out.ppm")?;
+    Ok(())
 }
