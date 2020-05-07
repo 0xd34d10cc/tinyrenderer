@@ -179,6 +179,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let p3 = head.vertices[z];
 
                 let translate = |vertex: Vertex| -> (usize, usize) {
+                    // coordinates in obj file are in [-1.0; 1.0] range
                     let x = (vertex.x as f32 + 1.0) / 2.0 * (WIDTH - 1) as f32;
                     let y = (vertex.y as f32 + 1.0) / 2.0 * (HEIGHT - 1) as f32;
                     (x as usize, y as usize)
