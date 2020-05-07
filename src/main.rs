@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 
+use wavefront_obj::obj::{self, Primitive, Vertex};
 use glam::{vec3, Vec3};
 
 #[inline(always)]
@@ -34,7 +35,9 @@ impl Image {
     #[inline(always)]
     fn set(&mut self, col: usize, row: usize, pixel: Vec3) {
         let index = row * self.width + col;
-        self.data[index] = pixel;
+        // if index < self.data.len() {
+            self.data[index] = pixel;
+        // }
     }
 
     fn flip_horizontally(&mut self) {
@@ -151,16 +154,43 @@ fn white() -> Vec3 {
     vec3(1.0, 1.0, 1.0)
 }
 
-fn red() -> Vec3 {
-    vec3(1.0, 0.0, 0.0)
-}
+const WIDTH: usize = 800;
+const HEIGHT: usize = 800;
 
-fn main() -> io::Result<()> {
-    let mut renderer = Renderer::new(100, 100);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut renderer = Renderer::new(WIDTH, HEIGHT);
+    let model = std::fs::read_to_string("obj/african_head.obj")?;
+    let model = obj::parse(&model)
+        .map_err(|e| format!("Failed to parse line #{}: {}", e.line_number, e.message))?;
 
-    renderer.line((13, 20), (80, 40), white());
-    renderer.line((20, 13), (40, 80), red());
-    renderer.line((80, 40), (13, 20), red());
+    debug_assert_eq!(model.objects.len(), 1);
+    let mut head = model.objects.into_iter().next().ok_or("No data in obj file")?;
+
+    debug_assert_eq!(head.geometry.len(), 1);
+    let geometry = head.geometry.drain(..).next().ok_or("No faces")?;
+
+    for shape in geometry.shapes {
+        match shape.primitive {
+            Primitive::Triangle(x, y, z) => {
+                let (x, y, z) = (x.0, y.0, z.0);
+
+                let p1 = head.vertices[x];
+                let p2 = head.vertices[y];
+                let p3 = head.vertices[z];
+
+                let translate = |vertex: Vertex| -> (usize, usize) {
+                    let x = (vertex.x as f32 + 1.0) / 2.0 * (WIDTH - 1) as f32;
+                    let y = (vertex.y as f32 + 1.0) / 2.0 * (HEIGHT - 1) as f32;
+                    (x as usize, y as usize)
+                };
+
+                renderer.line(translate(p1), translate(p2), white());
+                renderer.line(translate(p2), translate(p3), white());
+                renderer.line(translate(p3), translate(p1), white());
+            },
+            _ => todo!()
+        }
+    }
 
     renderer.flip_horizontally();
     renderer.save("out.ppm")?;

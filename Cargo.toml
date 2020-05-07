@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 glam = "0.8.7"
+wavefront_obj = "7.0.0"
