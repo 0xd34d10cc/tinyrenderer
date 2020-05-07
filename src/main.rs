@@ -101,30 +101,47 @@ impl Renderer {
     ) {
         let dx = (x1 as i32 - x0 as i32).abs();
         let dy = (y1 as i32 - y0 as i32).abs();
+        let steep = if dx < dy {
+            std::mem::swap(&mut x0, &mut y0);
+            std::mem::swap(&mut x1, &mut y1);
+            true
+        } else {
+            false
+        };
 
-        if dx > dy {
-            if x0 > x1 {
-                std::mem::swap(&mut x0, &mut x1);
-                std::mem::swap(&mut y0, &mut y1);
-            }
+        if x0 > x1 {
+            // draw from left to right
+            std::mem::swap(&mut x0, &mut x1);
+            std::mem::swap(&mut y0, &mut y1);
+        }
 
-            let dx = (x1 - x0) as f32;
+        let dx = x1 as i32 - x0 as i32;
+        let dy = y1 as i32 - y0 as i32;
+        let derror2 = dy.abs() * 2;
+        let mut error2 = 0;
+
+        let mut y = y0 as i32;
+        let y_step = if y1 > y0 { 1 } else { -1 };
+
+        if steep {
             for x in x0..(x1 + 1) {
-                let t = (x - x0) as f32 / dx;
-                let y = y0 as f32 * (1.0 - t) + y1 as f32 * t;
-                self.set(x as usize, y as usize, color);
+                self.set(y as usize, x, color);
+
+                error2 += derror2;
+                if error2 > dx {
+                    y += y_step;
+                    error2 -= dx * 2;
+                }
             }
         } else {
-            if y0 > y1 {
-                std::mem::swap(&mut x0, &mut x1);
-                std::mem::swap(&mut y0, &mut y1);
-            }
+            for x in x0..(x1 + 1) {
+                self.set(x, y as usize, color);
 
-            let dy = (y1 - y0) as f32;
-            for y in y0..(y1 + 1) {
-                let t = (y - y0) as f32 / dy;
-                let x = x0 as f32 * (1.0 - t) + x1 as f32 * t;
-                self.set(x as usize, y as usize, color);
+                error2 += derror2;
+                if error2 > dx {
+                    y += y_step;
+                    error2 -= dx * 2;
+                }
             }
         }
     }
