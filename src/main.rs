@@ -96,11 +96,32 @@ impl Renderer {
         self.target.set(x, y, color);
     }
 
-    fn line(&mut self, (x0, y0): (usize, usize), (x1, y1): (usize, usize), color: Vec3) {
-        for x in x0..(x1+1) {
-            let t = (x - x0) as f32 / (x1 - x0) as f32;
-            let y = y0 as f32 * (1.0 - t) + y1 as f32 * t;
-            self.set(x as usize, y as usize, color);
+    fn line(&mut self, (mut x0, mut y0): (usize, usize), (mut x1, mut y1): (usize, usize), color: Vec3) {
+        let dx = (x1 as i32 - x0 as i32).abs();
+        let dy = (y1 as i32 - y0 as i32).abs();
+
+        if dx > dy {
+            if x0 > x1 {
+                std::mem::swap(&mut x0, &mut x1);
+                std::mem::swap(&mut y0, &mut y1);
+            }
+
+            for x in x0..(x1+1) {
+                let t = (x - x0) as f32 / (x1 - x0) as f32;
+                let y = y0 as f32 * (1.0 - t) + y1 as f32 * t;
+                self.set(x as usize, y as usize, color);
+            }
+        } else {
+            if y0 > y1 {
+                std::mem::swap(&mut x0, &mut x1);
+                std::mem::swap(&mut y0, &mut y1);
+            }
+
+            for y in y0..(y1+1) {
+                let t = (y - y0) as f32 / (y1 - y0) as f32;
+                let x = x0 as f32 * (1.0 - t) + x1 as f32 * t;
+                self.set(x as usize, y as usize, color);
+            }
         }
     }
 }
