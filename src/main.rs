@@ -1,8 +1,7 @@
-use std::io::{self, Write, BufWriter};
 use std::fs::File;
+use std::io::{self, BufWriter, Write};
 
-use glam::{Vec3, vec3};
-
+use glam::{vec3, Vec3};
 
 #[inline(always)]
 fn clamp(x: f32, min: f32, max: f32) -> f32 {
@@ -22,7 +21,6 @@ pub struct Image {
     width: usize,
     height: usize,
 }
-
 
 impl Image {
     fn new(width: usize, height: usize) -> Self {
@@ -49,7 +47,6 @@ impl Image {
         }
     }
 
-
     // write as PPM
     fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
         writeln!(w, "P3")?; // means that colors are in ASCII
@@ -71,13 +68,13 @@ impl Image {
 }
 
 struct Renderer {
-    target: Image
+    target: Image,
 }
 
 impl Renderer {
     fn new(width: usize, height: usize) -> Self {
         Renderer {
-            target: Image::new(width, height)
+            target: Image::new(width, height),
         }
     }
 
@@ -96,7 +93,12 @@ impl Renderer {
         self.target.set(x, y, color);
     }
 
-    fn line(&mut self, (mut x0, mut y0): (usize, usize), (mut x1, mut y1): (usize, usize), color: Vec3) {
+    fn line(
+        &mut self,
+        (mut x0, mut y0): (usize, usize),
+        (mut x1, mut y1): (usize, usize),
+        color: Vec3,
+    ) {
         let dx = (x1 as i32 - x0 as i32).abs();
         let dy = (y1 as i32 - y0 as i32).abs();
 
@@ -106,8 +108,9 @@ impl Renderer {
                 std::mem::swap(&mut y0, &mut y1);
             }
 
-            for x in x0..(x1+1) {
-                let t = (x - x0) as f32 / (x1 - x0) as f32;
+            let dx = (x1 - x0) as f32;
+            for x in x0..(x1 + 1) {
+                let t = (x - x0) as f32 / dx;
                 let y = y0 as f32 * (1.0 - t) + y1 as f32 * t;
                 self.set(x as usize, y as usize, color);
             }
@@ -117,8 +120,9 @@ impl Renderer {
                 std::mem::swap(&mut y0, &mut y1);
             }
 
-            for y in y0..(y1+1) {
-                let t = (y - y0) as f32 / (y1 - y0) as f32;
+            let dy = (y1 - y0) as f32;
+            for y in y0..(y1 + 1) {
+                let t = (y - y0) as f32 / dy;
                 let x = x0 as f32 * (1.0 - t) + x1 as f32 * t;
                 self.set(x as usize, y as usize, color);
             }
