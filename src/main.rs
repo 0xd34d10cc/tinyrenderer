@@ -97,16 +97,10 @@ impl Renderer {
     }
 
     fn line(&mut self, (x0, y0): (usize, usize), (x1, y1): (usize, usize), color: Vec3) {
-        let mut t = 0.0f32;
-        loop {
-            let x = x0 as f32 + (x1 - x0) as f32 * t;
-            let y = y0 as f32 + (y1 - y0) as f32 * t;
+        for x in x0..(x1+1) {
+            let t = (x - x0) as f32 / (x1 - x0) as f32;
+            let y = y0 as f32 * (1.0 - t) + y1 as f32 * t;
             self.set(x as usize, y as usize, color);
-
-            t += 0.01;
-            if t > 1.0 {
-                break;
-            }
         }
     }
 }
@@ -121,7 +115,11 @@ fn red() -> Vec3 {
 
 fn main() -> io::Result<()> {
     let mut renderer = Renderer::new(100, 100);
+
     renderer.line((13, 20), (80, 40), white());
+    renderer.line((20, 13), (40, 80), red());
+    renderer.line((80, 40), (13, 20), red());
+
     renderer.flip_horizontally();
     renderer.save("out.ppm")?;
     Ok(())
