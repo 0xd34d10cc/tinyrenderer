@@ -1,8 +1,10 @@
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 
-use wavefront_obj::obj::{self, Primitive, Vertex};
 use glam::{vec3, Vec3};
+use wavefront_obj::obj::{self, ObjSet, Primitive, Vertex};
+
+type Point<T> = (T, T);
 
 #[inline(always)]
 fn clamp(x: f32, min: f32, max: f32) -> f32 {
@@ -36,7 +38,7 @@ impl Image {
     fn set(&mut self, col: usize, row: usize, pixel: Vec3) {
         let index = row * self.width + col;
         // if index < self.data.len() {
-            self.data[index] = pixel;
+        self.data[index] = pixel;
         // }
     }
 
@@ -98,8 +100,8 @@ impl Renderer {
 
     fn line(
         &mut self,
-        (mut x0, mut y0): (usize, usize),
-        (mut x1, mut y1): (usize, usize),
+        (mut x0, mut y0): Point<usize>,
+        (mut x1, mut y1): Point<usize>,
         color: Vec3,
     ) {
         let dx = (x1 as i32 - x0 as i32).abs();
@@ -148,6 +150,53 @@ impl Renderer {
             }
         }
     }
+
+    fn triangle(&mut self, p1: Point<usize>, p2: Point<usize>, p3: Point<usize>, color: Vec3) {
+        self.line(p1, p2, color);
+        self.line(p2, p3, color);
+        self.line(p3, p1, color);
+    }
+
+    fn obj(&mut self, model: &ObjSet) {
+        for object in &model.objects {
+            for geometry in &object.geometry {
+                for shape in &geometry.shapes {
+                    let translate = |vertex: Vertex| -> Point<usize> {
+                        // coordinates in obj file are in [-1.0; 1.0] range
+                        let x = (vertex.x as f32 + 1.0) / 2.0 * (WIDTH - 1) as f32;
+                        let y = (vertex.y as f32 + 1.0) / 2.0 * (HEIGHT - 1) as f32;
+                        (x as usize, y as usize)
+                    };
+
+                    match shape.primitive {
+                        Primitive::Triangle(x, y, z) => {
+                            let (x, y, z) = (x.0, y.0, z.0);
+
+                            let p1 = object.vertices[x];
+                            let p2 = object.vertices[y];
+                            let p3 = object.vertices[z];
+
+                            self.triangle(translate(p1), translate(p2), translate(p3), white());
+                        }
+                        Primitive::Line(x, y) => {
+                            let (x, y) = (x.0, y.0);
+
+                            let p1 = object.vertices[x];
+                            let p2 = object.vertices[y];
+
+                            self.line(translate(p1), translate(p2), white());
+                        }
+                        Primitive::Point(x) => {
+                            let x = x.0;
+                            let p = object.vertices[x];
+                            let (x, y) = translate(p);
+                            self.set(x, y, white());
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn white() -> Vec3 {
@@ -157,41 +206,17 @@ fn white() -> Vec3 {
 const WIDTH: usize = 800;
 const HEIGHT: usize = 800;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut renderer = Renderer::new(WIDTH, HEIGHT);
-    let model = std::fs::read_to_string("obj/african_head.obj")?;
+fn read_model(path: &str) -> Result<ObjSet, Box<dyn std::error::Error>> {
+    let model = std::fs::read_to_string(path)?;
     let model = obj::parse(&model)
         .map_err(|e| format!("Failed to parse line #{}: {}", e.line_number, e.message))?;
+    Ok(model)
+}
 
-    debug_assert_eq!(model.objects.len(), 1);
-    let mut head = model.objects.into_iter().next().ok_or("No data in obj file")?;
-
-    debug_assert_eq!(head.geometry.len(), 1);
-    let geometry = head.geometry.drain(..).next().ok_or("No faces")?;
-
-    for shape in geometry.shapes {
-        match shape.primitive {
-            Primitive::Triangle(x, y, z) => {
-                let (x, y, z) = (x.0, y.0, z.0);
-
-                let p1 = head.vertices[x];
-                let p2 = head.vertices[y];
-                let p3 = head.vertices[z];
-
-                let translate = |vertex: Vertex| -> (usize, usize) {
-                    // coordinates in obj file are in [-1.0; 1.0] range
-                    let x = (vertex.x as f32 + 1.0) / 2.0 * (WIDTH - 1) as f32;
-                    let y = (vertex.y as f32 + 1.0) / 2.0 * (HEIGHT - 1) as f32;
-                    (x as usize, y as usize)
-                };
-
-                renderer.line(translate(p1), translate(p2), white());
-                renderer.line(translate(p2), translate(p3), white());
-                renderer.line(translate(p3), translate(p1), white());
-            },
-            _ => todo!()
-        }
-    }
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut renderer = Renderer::new(WIDTH, HEIGHT);
+    let model = read_model("obj/african_head.obj")?;
+    renderer.obj(&model);
 
     renderer.flip_horizontally();
     renderer.save("out.ppm")?;
