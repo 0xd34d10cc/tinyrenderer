@@ -95,6 +95,7 @@ impl Renderer {
         Ok(())
     }
 
+    #[inline(always)]
     fn set(&mut self, x: usize, y: usize, color: Vec3) {
         self.target.set(x, y, color);
     }
@@ -225,16 +226,18 @@ impl Renderer {
     }
 
     fn obj(&mut self, model: &ObjSet) {
+        let width = self.target.width;
+        let height = self.target.height;
+        let translate = |vertex: Vertex| -> Point<usize> {
+            // coordinates in obj file are in [-1.0; 1.0] range
+            let x = (vertex.x as f32 + 1.0) / 2.0 * (width - 1) as f32;
+            let y = (vertex.y as f32 + 1.0) / 2.0 * (height - 1) as f32;
+            (x as usize, y as usize)
+        };
+
         for object in &model.objects {
             for geometry in &object.geometry {
                 for shape in &geometry.shapes {
-                    let translate = |vertex: Vertex| -> Point<usize> {
-                        // coordinates in obj file are in [-1.0; 1.0] range
-                        let x = (vertex.x as f32 + 1.0) / 2.0 * (WIDTH - 1) as f32;
-                        let y = (vertex.y as f32 + 1.0) / 2.0 * (HEIGHT - 1) as f32;
-                        (x as usize, y as usize)
-                    };
-
                     match shape.primitive {
                         Primitive::Triangle(x, y, z) => {
                             let (x, y, z) = (x.0, y.0, z.0);
@@ -297,9 +300,6 @@ fn green() -> Vec3 {
     vec3(0.0, 1.0, 0.0)
 }
 
-const WIDTH: usize = 800;
-const HEIGHT: usize = 800;
-
 fn read_model(path: &str) -> Result<ObjSet, Box<dyn std::error::Error>> {
     let model = std::fs::read_to_string(path)?;
     let model = obj::parse(&model)
@@ -308,7 +308,7 @@ fn read_model(path: &str) -> Result<ObjSet, Box<dyn std::error::Error>> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut renderer = Renderer::new(WIDTH, HEIGHT);
+    let mut renderer = Renderer::new(800, 800);
 
     let model = read_model("obj/african_head.obj")?;
     renderer.obj(&model);
