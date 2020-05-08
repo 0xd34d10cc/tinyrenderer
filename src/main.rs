@@ -3,6 +3,7 @@ use std::io::{self, BufWriter, Write};
 
 use glam::{vec3, Vec3};
 use wavefront_obj::obj::{self, ObjSet, Primitive, Vertex};
+use rand::random;
 
 type Point<T> = (T, T);
 
@@ -151,10 +152,76 @@ impl Renderer {
         }
     }
 
-    fn triangle(&mut self, p1: Point<usize>, p2: Point<usize>, p3: Point<usize>, color: Vec3) {
-        self.line(p1, p2, color);
-        self.line(p2, p3, color);
-        self.line(p3, p1, color);
+    fn triangle(
+        &mut self,
+        mut p0: Point<usize>,
+        mut p1: Point<usize>,
+        mut p2: Point<usize>,
+        color: Vec3,
+    ) {
+        // sort points by Y
+        if p1.1 < p0.1 {
+            std::mem::swap(&mut p1, &mut p0);
+        }
+
+        if p2.1 < p0.1 {
+            std::mem::swap(&mut p2, &mut p0);
+        }
+
+        if p2.1 < p1.1 {
+            std::mem::swap(&mut p2, &mut p1);
+        }
+
+        debug_assert!(p0.1 <= p1.1);
+        debug_assert!(p1.1 <= p2.1);
+
+        let total_height = p2.1 - p0.1;
+        let segment_height = p1.1 - p0.1;
+
+        if segment_height != 0 {
+            for y in p0.1..(p1.1 + 1) {
+                let alpha = (y - p0.1) as f32 / total_height as f32;
+                let beta = (y - p0.1) as f32 / segment_height as f32;
+
+                let a = p0.0 as f32 + (p2.0 as i32 - p0.0 as i32) as f32 * alpha;
+                let b = p0.0 as f32 + (p1.0 as i32 - p0.0 as i32) as f32 * beta;
+
+                let mut a = a as usize;
+                let mut b = b as usize;
+
+                if b < a {
+                    std::mem::swap(&mut a, &mut b);
+                }
+
+                // TODO: replace by memset?
+                for x in a..(b + 1) {
+                    self.set(x, y, color);
+                }
+            }
+        }
+
+        let segment_height = p2.1 - p1.1;
+
+        if segment_height != 0 {
+            for y in p1.1..(p2.1 + 1) {
+                let alpha = (y - p0.1) as f32 / total_height as f32;
+                let beta = (y - p1.1) as f32 / segment_height as f32;
+
+                let a = p0.0 as f32 + (p2.0 as i32 - p0.0 as i32) as f32 * alpha;
+                let b = p1.0 as f32 + (p2.0 as i32 - p1.0 as i32) as f32 * beta;
+
+                let mut a = a as usize;
+                let mut b = b as usize;
+
+                if b < a {
+                    std::mem::swap(&mut a, &mut b);
+                }
+
+                for x in a..(b + 1) {
+                    self.set(x, y, color);
+                }
+            }
+        }
     }
 
     fn obj(&mut self, model: &ObjSet) {
@@ -176,7 +243,7 @@ impl Renderer {
                             let p2 = object.vertices[y];
                             let p3 = object.vertices[z];
 
-                            self.triangle(translate(p1), translate(p2), translate(p3), white());
+                            self.triangle(translate(p1), translate(p2), translate(p3), random_color());
                         }
                         Primitive::Line(x, y) => {
                             let (x, y) = (x.0, y.0);
@@ -184,13 +251,13 @@ impl Renderer {
                             let p1 = object.vertices[x];
                             let p2 = object.vertices[y];
 
-                            self.line(translate(p1), translate(p2), white());
+                            self.line(translate(p1), translate(p2), random_color());
                         }
                         Primitive::Point(x) => {
                             let x = x.0;
                             let p = object.vertices[x];
                             let (x, y) = translate(p);
-                            self.set(x, y, white());
+                            self.set(x, y, random_color());
                         }
                     }
                 }
@@ -199,8 +266,20 @@ impl Renderer {
     }
 }
 
+fn random_color() -> Vec3 {
+    vec3(random::<f32>(), random::<f32>(), random::<f32>())
+}
+
 fn white() -> Vec3 {
     vec3(1.0, 1.0, 1.0)
+}
+
+fn red() -> Vec3 {
+    vec3(1.0, 0.0, 0.0)
+}
+
+fn green() -> Vec3 {
+    vec3(0.0, 1.0, 0.0)
 }
 
 const WIDTH: usize = 800;
@@ -215,6 +294,10 @@ fn read_model(path: &str) -> Result<ObjSet, Box<dyn std::error::Error>> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut renderer = Renderer::new(WIDTH, HEIGHT);
+    // renderer.triangle((10, 70), (50, 160), (70, 80), red());
+    // renderer.triangle((180, 50), (150, 1), (70, 180), white());
+    // renderer.triangle((180, 150), (120, 160), (130, 180), green());
+
     let model = read_model("obj/african_head.obj")?;
     renderer.obj(&model);
 
