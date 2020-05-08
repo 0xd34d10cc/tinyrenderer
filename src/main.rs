@@ -243,12 +243,22 @@ impl Renderer {
                             let p2 = object.vertices[y];
                             let p3 = object.vertices[z];
 
-                            self.triangle(
-                                translate(p1),
-                                translate(p2),
-                                translate(p3),
-                                random_color(),
-                            );
+                            let to_vec3 = |p: Vertex| -> Vec3 {
+                                vec3(p.x as f32, p.y as f32, p.z as f32)
+                            };
+
+                            let normal = (to_vec3(p3) - to_vec3(p1)).cross(to_vec3(p2) - to_vec3(p1)).normalize();
+                            let light_direction = vec3(0.0, 0.0, -1.0);
+                            let intensity = normal.dot(light_direction);
+
+                            if intensity.is_sign_positive() {
+                                self.triangle(
+                                    translate(p1),
+                                    translate(p2),
+                                    translate(p3),
+                                    white() * intensity,
+                                );
+                            }
                         }
                         Primitive::Line(x, y) => {
                             let (x, y) = (x.0, y.0);
@@ -299,9 +309,6 @@ fn read_model(path: &str) -> Result<ObjSet, Box<dyn std::error::Error>> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut renderer = Renderer::new(WIDTH, HEIGHT);
-    // renderer.triangle((10, 70), (50, 160), (70, 80), red());
-    // renderer.triangle((180, 50), (150, 1), (70, 180), white());
-    // renderer.triangle((180, 150), (120, 160), (130, 180), green());
 
     let model = read_model("obj/african_head.obj")?;
     renderer.obj(&model);
