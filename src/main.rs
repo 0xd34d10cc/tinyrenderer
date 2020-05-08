@@ -2,8 +2,8 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write};
 
 use glam::{vec3, Vec3};
-use wavefront_obj::obj::{self, ObjSet, Primitive, Vertex};
 use rand::random;
+use wavefront_obj::obj::{self, ObjSet, Primitive, Vertex};
 
 type Point<T> = (T, T);
 
@@ -243,7 +243,12 @@ impl Renderer {
                             let p2 = object.vertices[y];
                             let p3 = object.vertices[z];
 
-                            self.triangle(translate(p1), translate(p2), translate(p3), random_color());
+                            self.triangle(
+                                translate(p1),
+                                translate(p2),
+                                translate(p3),
+                                random_color(),
+                            );
                         }
                         Primitive::Line(x, y) => {
                             let (x, y) = (x.0, y.0);
