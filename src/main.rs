@@ -5,7 +5,6 @@ use glam::{vec3, Vec3};
 use rand::random;
 use wavefront_obj::obj::{self, ObjSet, Primitive, Vertex};
 
-type Point<T> = (T, T);
 
 #[inline(always)]
 fn clamp(x: f32, min: f32, max: f32) -> f32 {
@@ -22,16 +21,17 @@ fn clamp(x: f32, min: f32, max: f32) -> f32 {
 
 // returns a minumal rectangle which contains triangle abc
 #[inline(always)]
-fn find_box(a: Point<usize>, b: Point<usize>, c: Point<usize>) -> ((usize, usize), (usize, usize)) {
-    use std::cmp::{max, min};
+fn find_box(a: Vec3, b: Vec3, c: Vec3) -> ((usize, usize), (usize, usize)) {
+    let max = |a, b| if a > b { a } else { b };
+    let min = |a, b| if a < b { a } else { b };
 
-    let min_x = min(a.0, min(b.0, c.0));
-    let min_y = min(a.1, min(b.1, c.1));
+    let min_x = min(a.x(), min(b.x(), c.x()));
+    let min_y = min(a.y(), min(b.y(), c.y()));
 
-    let max_x = max(a.0, max(b.0, c.0));
-    let max_y = max(a.1, max(b.1, c.1));
+    let max_x = max(a.x(), max(b.x(), c.x()));
+    let max_y = max(a.y(), max(b.y(), c.y()));
 
-    ((min_x, min_y), (max_x, max_y))
+    ((min_x as usize, min_y as usize), (max_x as usize, max_y as usize))
 }
 
 pub struct Image {
@@ -89,12 +89,14 @@ impl Image {
 
 struct Renderer {
     target: Image,
+    zbuffer: Vec<f32>,
 }
 
 impl Renderer {
     fn new(width: usize, height: usize) -> Self {
         Renderer {
             target: Image::new(width, height),
+            zbuffer: vec![std::f32::NEG_INFINITY; width * height],
         }
     }
 
@@ -116,8 +118,8 @@ impl Renderer {
 
     fn line(
         &mut self,
-        (mut x0, mut y0): Point<usize>,
-        (mut x1, mut y1): Point<usize>,
+        (mut x0, mut y0): (usize, usize),
+        (mut x1, mut y1): (usize, usize),
         color: Vec3,
     ) {
         let dx = (x1 as i32 - x0 as i32).abs();
@@ -167,33 +169,18 @@ impl Renderer {
         }
     }
 
-    fn triangle(&mut self, a: Point<usize>, b: Point<usize>, c: Point<usize>, color: Vec3) {
-        let (min, mut max) = find_box(a, b, c);
-
-        // degenerate triangle
-        if min.0 == max.0 || min.1 == max.1 {
-            return;
-        }
-
-        // prevent out of bounds access for corner cases
-        if max.0 == self.target.width - 1 {
-            max.0 -= 1;
-        }
-
-        if max.1 == self.target.height - 1 {
-            max.1 -= 1;
-        }
-
-        let barycentric = |p: Point<usize>| {
+    fn triangle(&mut self, a: Vec3, b: Vec3, c: Vec3, color: Vec3) {
+        let (min, max) = find_box(a, b, c);
+        let barycentric = |p: Vec3| {
             let xs = vec3(
-                c.0 as f32 - a.0 as f32,
-                b.0 as f32 - a.0 as f32,
-                a.0 as f32 - p.0 as f32, // projection(pa, y)
+                c.x() - a.x(),
+                b.x() - a.x(),
+                a.x() - p.x(), // projection(pa, x)
             );
             let ys = vec3(
-                c.1 as f32 - a.1 as f32,
-                b.1 as f32 - a.1 as f32,
-                a.1 as f32 - p.1 as f32,
+                c.y() - a.y(),
+                b.y() - a.y(),
+                a.y() - p.y(),
             );
 
             let u = xs.cross(ys);
@@ -203,17 +190,25 @@ impl Renderer {
             vec3(1.0 - (u.x() + u.y()) / u.z(), u.y() / u.z(), u.x() / u.z())
         };
 
+        let mut z = 0.0;
         for y in min.1..(max.1 + 1) {
             for x in min.0..(max.0 + 1) {
-                let b = barycentric((x, y));
-
-                if b.x() < 0.0 || b.y() < 0.0 || b.z() < 0.0
+                let p = vec3(x as f32, y as f32, z);
+                let bc = barycentric(p);
+                if bc.x() < 0.0 || bc.y() < 0.0 || bc.z() < 0.0
                 {
                     // (x, y) is out of triangle
                     continue;
                 }
 
-                self.set(x, y, color);
+                z = bc.x() * a.z() + bc.y() * b.z() + bc.z() * c.z();
+
+                // if previous pixel put at |x, y| as further away from camera, replace it
+                let prev_z = &mut self.zbuffer[x + y * self.target.width];
+                if *prev_z < z {
+                    *prev_z =  z;
+                    self.set(x, y, color);
+                }
             }
         }
     }
@@ -221,11 +216,12 @@ impl Renderer {
     fn obj(&mut self, model: &ObjSet) {
         let width = self.target.width;
         let height = self.target.height;
-        let translate = |vertex: Vertex| -> Point<usize> {
+        let translate = |vertex: Vertex| -> Vec3 {
             // coordinates in obj file are in [-1.0; 1.0] range
             let x = (vertex.x as f32 + 1.0) / 2.0 * (width - 1) as f32;
             let y = (vertex.y as f32 + 1.0) / 2.0 * (height - 1) as f32;
-            (x as usize, y as usize)
+            let z = vertex.z as f32;
+            vec3(x, y, z)
         };
 
         for object in &model.objects {
@@ -257,20 +253,7 @@ impl Renderer {
                                 );
                             }
                         }
-                        Primitive::Line(x, y) => {
-                            let (x, y) = (x.0, y.0);
-
-                            let p1 = object.vertices[x];
-                            let p2 = object.vertices[y];
-
-                            self.line(translate(p1), translate(p2), random_color());
-                        }
-                        Primitive::Point(x) => {
-                            let x = x.0;
-                            let p = object.vertices[x];
-                            let (x, y) = translate(p);
-                            self.set(x, y, random_color());
-                        }
+                        _ => todo!(),
                     }
                 }
             }
