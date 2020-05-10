@@ -1,23 +1,9 @@
-use std::fs::File;
-use std::io::{self, BufWriter, Write};
-
 use glam::{vec3, Vec3};
-use rand::random;
 use wavefront_obj::obj::{self, ObjSet, Primitive, Vertex};
 
+type Image = image::RgbImage;
+type Color = image::Rgb<u8>;
 
-#[inline(always)]
-fn clamp(x: f32, min: f32, max: f32) -> f32 {
-    if x < min {
-        return min;
-    }
-
-    if x > max {
-        return max;
-    }
-
-    return x;
-}
 
 // returns a minumal rectangle which contains triangle abc
 #[inline(always)]
@@ -34,59 +20,6 @@ fn find_box(a: Vec3, b: Vec3, c: Vec3) -> ((usize, usize), (usize, usize)) {
     ((min_x as usize, min_y as usize), (max_x as usize, max_y as usize))
 }
 
-pub struct Image {
-    data: Vec<Vec3>,
-    width: usize,
-    height: usize,
-}
-
-impl Image {
-    fn new(width: usize, height: usize) -> Self {
-        Image {
-            data: vec![vec3(0.1, 0.1, 0.1); width * height],
-            width,
-            height,
-        }
-    }
-
-    #[inline(always)]
-    fn set(&mut self, col: usize, row: usize, pixel: Vec3) {
-        let index = row * self.width + col;
-        // if index < self.data.len() {
-        self.data[index] = pixel;
-        // }
-    }
-
-    fn flip_horizontally(&mut self) {
-        for row in 0..((self.height + 1) / 2) {
-            let idx = row * self.width;
-            let bottom_idx = (self.height - row - 1) * self.width;
-            for col in 0..self.width {
-                self.data.swap(idx + col, bottom_idx + col);
-            }
-        }
-    }
-
-    // write as PPM
-    fn write<W: Write>(&self, w: &mut W) -> io::Result<()> {
-        writeln!(w, "P3")?; // means that colors are in ASCII
-        writeln!(w, "{} {}", self.width, self.height)?;
-        writeln!(w, "255")?; // max color value
-
-        for line in self.data.chunks(self.width) {
-            for pixel in line {
-                let r = 256.0 * clamp(pixel.x(), 0.0, 0.999);
-                let g = 256.0 * clamp(pixel.y(), 0.0, 0.999);
-                let b = 256.0 * clamp(pixel.z(), 0.0, 0.999);
-                write!(w, "{} {} {} ", r as u8, g as u8, b as u8)?;
-            }
-            writeln!(w, "")?;
-        }
-
-        Ok(())
-    }
-}
-
 struct Renderer {
     target: Image,
     zbuffer: Vec<f32>,
@@ -95,28 +28,26 @@ struct Renderer {
 impl Renderer {
     fn new(width: usize, height: usize) -> Self {
         Renderer {
-            target: Image::new(width, height),
+            target: Image::new(width as u32, height as u32),
             zbuffer: vec![std::f32::NEG_INFINITY; width * height],
         }
     }
 
-    fn flip_horizontally(&mut self) {
-        self.target.flip_horizontally();
+    fn flipv(&mut self) {
+        image::imageops::flip_vertical_in_place(&mut self.target);
     }
 
-    fn save(&self, path: &str) -> io::Result<()> {
-        let file = File::create(path)?;
-        let mut out = BufWriter::new(file);
-        self.target.write(&mut out)?;
+    fn save(&self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        self.target.save(path)?;
         Ok(())
     }
 
     #[inline(always)]
-    fn set(&mut self, x: usize, y: usize, color: Vec3) {
-        self.target.set(x, y, color);
+    fn set(&mut self, x: usize, y: usize, color: Color) {
+        self.target.put_pixel(x as u32, y as u32, color);
     }
 
-    fn triangle(&mut self, a: Vec3, b: Vec3, c: Vec3, color: Vec3) {
+    fn triangle(&mut self, a: Vec3, b: Vec3, c: Vec3, color: Color) {
         let (min, max) = find_box(a, b, c);
 
         let barycentric = |p: Vec3| {
@@ -153,7 +84,7 @@ impl Renderer {
                 z = bc.x() * a.z() + bc.y() * b.z() + bc.z() * c.z();
 
                 // if previous pixel put at |x, y| as further away from camera, replace it
-                let prev_z = &mut self.zbuffer[x + y * self.target.width];
+                let prev_z = &mut self.zbuffer[x + y * self.target.width() as usize];
                 if *prev_z < z {
                     *prev_z =  z;
                     self.set(x, y, color);
@@ -163,8 +94,8 @@ impl Renderer {
     }
 
     fn obj(&mut self, model: &ObjSet) {
-        let width = self.target.width;
-        let height = self.target.height;
+        let width = self.target.width();
+        let height = self.target.height();
         let translate = |vertex: Vertex| -> Vec3 {
             // coordinates in obj file are in [-1.0; 1.0] range
             let x = (vertex.x as f32 + 1.0) / 2.0 * (width - 1) as f32;
@@ -193,12 +124,15 @@ impl Renderer {
                             let light_direction = vec3(0.0, 0.0, -1.0);
                             let intensity = normal.dot(light_direction);
 
+                            let shade = (0xff as f32 * intensity) as u8;
+                            let color = [shade, shade, shade].into();
+
                             if intensity.is_sign_positive() {
                                 self.triangle(
                                     translate(p1),
                                     translate(p2),
                                     translate(p3),
-                                    white() * intensity,
+                                    color,
                                 );
                             }
                         }
@@ -208,26 +142,6 @@ impl Renderer {
             }
         }
     }
-}
-
-fn random_color() -> Vec3 {
-    vec3(random::<f32>(), random::<f32>(), random::<f32>())
-}
-
-fn white() -> Vec3 {
-    vec3(1.0, 1.0, 1.0)
-}
-
-fn red() -> Vec3 {
-    vec3(1.0, 0.0, 0.0)
-}
-
-fn green() -> Vec3 {
-    vec3(0.0, 1.0, 0.0)
-}
-
-fn blue() -> Vec3 {
-    vec3(0.0, 0.0, 1.0)
 }
 
 fn read_model(path: &str) -> Result<ObjSet, Box<dyn std::error::Error>> {
@@ -244,7 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let model = read_model("obj/african_head.obj")?;
     renderer.obj(&model);
 
-    renderer.flip_horizontally();
-    renderer.save("out.ppm")?;
+    renderer.flipv();
+    renderer.save("out.png")?;
     Ok(())
 }
