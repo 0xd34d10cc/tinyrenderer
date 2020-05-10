@@ -20,6 +20,20 @@ fn clamp(x: f32, min: f32, max: f32) -> f32 {
     return x;
 }
 
+// returns a minumal rectangle which contains triangle abc
+#[inline(always)]
+fn find_box(a: Point<usize>, b: Point<usize>, c: Point<usize>) -> ((usize, usize), (usize, usize)) {
+    use std::cmp::{max, min};
+
+    let min_x = min(a.0, min(b.0, c.0));
+    let min_y = min(a.1, min(b.1, c.1));
+
+    let max_x = max(a.0, max(b.0, c.0));
+    let max_y = max(a.1, max(b.1, c.1));
+
+    ((min_x, min_y), (max_x, max_y))
+}
+
 pub struct Image {
     data: Vec<Vec3>,
     width: usize,
@@ -153,74 +167,53 @@ impl Renderer {
         }
     }
 
-    fn triangle(
-        &mut self,
-        mut p0: Point<usize>,
-        mut p1: Point<usize>,
-        mut p2: Point<usize>,
-        color: Vec3,
-    ) {
-        // sort points by Y
-        if p1.1 < p0.1 {
-            std::mem::swap(&mut p1, &mut p0);
+    fn triangle(&mut self, a: Point<usize>, b: Point<usize>, c: Point<usize>, color: Vec3) {
+        let (min, mut max) = find_box(a, b, c);
+
+        // degenerate triangle
+        if min.0 == max.0 || min.1 == max.1 {
+            return;
         }
 
-        if p2.1 < p0.1 {
-            std::mem::swap(&mut p2, &mut p0);
+        // prevent out of bounds access for corner cases
+        if max.0 == self.target.width - 1 {
+            max.0 -= 1;
         }
 
-        if p2.1 < p1.1 {
-            std::mem::swap(&mut p2, &mut p1);
+        if max.1 == self.target.height - 1 {
+            max.1 -= 1;
         }
 
-        debug_assert!(p0.1 <= p1.1);
-        debug_assert!(p1.1 <= p2.1);
+        let barycentric = |p: Point<usize>| {
+            let xs = vec3(
+                c.0 as f32 - a.0 as f32,
+                b.0 as f32 - a.0 as f32,
+                a.0 as f32 - p.0 as f32, // projection(pa, y)
+            );
+            let ys = vec3(
+                c.1 as f32 - a.1 as f32,
+                b.1 as f32 - a.1 as f32,
+                a.1 as f32 - p.1 as f32,
+            );
 
-        let total_height = p2.1 - p0.1;
-        let segment_height = p1.1 - p0.1;
+            let u = xs.cross(ys);
+            // (u.y/u.z, u.x/u.z) are coordinates in (a, ab, ac) basis
+            // TODO: why are we dividing by z here?
 
-        if segment_height != 0 {
-            for y in p0.1..(p1.1 + 1) {
-                let alpha = (y - p0.1) as f32 / total_height as f32;
-                let beta = (y - p0.1) as f32 / segment_height as f32;
+            vec3(1.0 - (u.x() + u.y()) / u.z(), u.y() / u.z(), u.x() / u.z())
+        };
 
-                let a = p0.0 as f32 + (p2.0 as i32 - p0.0 as i32) as f32 * alpha;
-                let b = p0.0 as f32 + (p1.0 as i32 - p0.0 as i32) as f32 * beta;
+        for y in min.1..(max.1 + 1) {
+            for x in min.0..(max.0 + 1) {
+                let b = barycentric((x, y));
 
-                let mut a = a as usize;
-                let mut b = b as usize;
-
-                if b < a {
-                    std::mem::swap(&mut a, &mut b);
+                if b.x() < 0.0 || b.y() < 0.0 || b.z() < 0.0
+                {
+                    // (x, y) is out of triangle
+                    continue;
                 }
 
-                // TODO: replace by memset?
-                for x in a..(b + 1) {
-                    self.set(x, y, color);
-                }
-            }
-        }
-
-        let segment_height = p2.1 - p1.1;
-
-        if segment_height != 0 {
-            for y in p1.1..(p2.1 + 1) {
-                let alpha = (y - p0.1) as f32 / total_height as f32;
-                let beta = (y - p1.1) as f32 / segment_height as f32;
-
-                let a = p0.0 as f32 + (p2.0 as i32 - p0.0 as i32) as f32 * alpha;
-                let b = p1.0 as f32 + (p2.0 as i32 - p1.0 as i32) as f32 * beta;
-
-                let mut a = a as usize;
-                let mut b = b as usize;
-
-                if b < a {
-                    std::mem::swap(&mut a, &mut b);
-                }
-
-                for x in a..(b + 1) {
-                    self.set(x, y, color);
-                }
+                self.set(x, y, color);
             }
         }
     }
@@ -246,11 +239,12 @@ impl Renderer {
                             let p2 = object.vertices[y];
                             let p3 = object.vertices[z];
 
-                            let to_vec3 = |p: Vertex| -> Vec3 {
-                                vec3(p.x as f32, p.y as f32, p.z as f32)
-                            };
+                            let to_vec3 =
+                                |p: Vertex| -> Vec3 { vec3(p.x as f32, p.y as f32, p.z as f32) };
 
-                            let normal = (to_vec3(p3) - to_vec3(p1)).cross(to_vec3(p2) - to_vec3(p1)).normalize();
+                            let normal = (to_vec3(p3) - to_vec3(p1))
+                                .cross(to_vec3(p2) - to_vec3(p1))
+                                .normalize();
                             let light_direction = vec3(0.0, 0.0, -1.0);
                             let intensity = normal.dot(light_direction);
 
@@ -300,6 +294,10 @@ fn green() -> Vec3 {
     vec3(0.0, 1.0, 0.0)
 }
 
+fn blue() -> Vec3 {
+    vec3(0.0, 0.0, 1.0)
+}
+
 fn read_model(path: &str) -> Result<ObjSet, Box<dyn std::error::Error>> {
     let model = std::fs::read_to_string(path)?;
     let model = obj::parse(&model)
@@ -308,7 +306,8 @@ fn read_model(path: &str) -> Result<ObjSet, Box<dyn std::error::Error>> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut renderer = Renderer::new(800, 800);
+    let (width, height) = (800, 800);
+    let mut renderer = Renderer::new(width, height);
 
     let model = read_model("obj/african_head.obj")?;
     renderer.obj(&model);
