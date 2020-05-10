@@ -69,10 +69,9 @@ impl Renderer {
             vec3(1.0 - (u.x() + u.y()) / u.z(), u.y() / u.z(), u.x() / u.z())
         };
 
-        let mut z = 0.0;
         for y in min.1..(max.1 + 1) {
             for x in min.0..(max.0 + 1) {
-                let p = vec3(x as f32, y as f32, z);
+                let p = vec3(x as f32, y as f32, 0.0);
                 let bc = barycentric(p);
                 if bc.x() < 0.0 || bc.y() < 0.0 || bc.z() < 0.0
                 {
@@ -81,7 +80,7 @@ impl Renderer {
                 }
 
                 // TODO: WTF?
-                z = bc.x() * a.z() + bc.y() * b.z() + bc.z() * c.z();
+                let z = bc.x() * a.z() + bc.y() * b.z() + bc.z() * c.z();
 
                 // if previous pixel put at |x, y| as further away from camera, replace it
                 let prev_z = &mut self.zbuffer[x + y * self.target.width() as usize];
@@ -155,6 +154,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (width, height) = (800, 800);
     let mut renderer = Renderer::new(width, height);
 
+    let texture = image::open("obj/african_head_diffuse.png")?;
     let model = read_model("obj/african_head.obj")?;
     renderer.obj(&model);
 
