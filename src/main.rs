@@ -9,6 +9,7 @@ type Texture = Image;
 type ZBuffer = image::GrayImage;
 type ZDepth = image::Luma<u8>;
 
+#[inline(always)]
 fn min(a: f32, b: f32) -> f32 {
     if a > b {
         b
@@ -17,6 +18,7 @@ fn min(a: f32, b: f32) -> f32 {
     }
 }
 
+#[inline(always)]
 fn max(a: f32, b: f32) -> f32 {
     if a > b {
         a
@@ -25,6 +27,7 @@ fn max(a: f32, b: f32) -> f32 {
     }
 }
 
+#[inline(always)]
 fn clamp(x: f32, minval: f32, maxval: f32) -> f32 {
     if x < minval {
         return minval;
@@ -37,6 +40,7 @@ fn clamp(x: f32, minval: f32, maxval: f32) -> f32 {
     x
 }
 
+#[inline(always)]
 fn barycentric(a: Vec2, b: Vec2, c: Vec2, p: Vec2) -> Vec3 {
     let xs = vec3(c.x() - a.x(), b.x() - a.x(), a.x() - p.x());
     let ys = vec3(c.y() - a.y(), b.y() - a.y(), a.y() - p.y());
@@ -255,14 +259,18 @@ fn read_model(path: &str) -> Result<ObjSet, Box<dyn Error>> {
     Ok(model)
 }
 
+fn read_texture(path: &str) -> Result<Texture, Box<dyn Error>> {
+    let mut texture = image::open(path)?.to_rgb();
+    image::imageops::flip_vertical_in_place(&mut texture);
+    Ok(texture)
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
-    let (width, height) = (800, 800);
+    let (width, height) = (1024, 1024);
     let mut renderer = Renderer::new(width, height);
 
-    let mut texture = image::open("obj/african_head_diffuse.png")?.to_rgb();
-    image::imageops::flip_vertical_in_place(&mut texture);
-
     let model = read_model("obj/african_head.obj")?;
+    let texture = read_texture("obj/african_head_diffuse.png")?;
     renderer.obj(&model, &texture);
 
     renderer.flipv();
