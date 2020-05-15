@@ -6,8 +6,6 @@ use wavefront_obj::obj::{self, ObjSet, Primitive, TVertex, Vertex};
 type Image = image::RgbImage;
 type Color = image::Rgb<u8>;
 type Texture = Image;
-type ZBuffer = image::GrayImage;
-type ZDepth = image::Luma<u8>;
 
 #[inline(always)]
 fn min(a: f32, b: f32) -> f32 {
@@ -25,19 +23,6 @@ fn max(a: f32, b: f32) -> f32 {
     } else {
         b
     }
-}
-
-#[inline(always)]
-fn clamp(x: f32, minval: f32, maxval: f32) -> f32 {
-    if x < minval {
-        return minval;
-    }
-
-    if x > maxval {
-        return maxval;
-    }
-
-    x
 }
 
 #[inline(always)]
@@ -83,25 +68,25 @@ fn in_triangle<F>(a: Vec3, b: Vec3, c: Vec3, mut f: F) where F: FnMut(usize, usi
 
 struct Renderer {
     target: Image,
-    zbuffer: ZBuffer,
+    zbuffer: Vec<f32>,
 }
 
 impl Renderer {
     fn new(width: usize, height: usize) -> Self {
         Renderer {
             target: Image::new(width as u32, height as u32),
-            zbuffer: ZBuffer::new(width as u32, height as u32),
+            zbuffer: vec![std::f32::NEG_INFINITY; width * height],
         }
     }
 
     fn flipv(&mut self) {
         image::imageops::flip_vertical_in_place(&mut self.target);
-        image::imageops::flip_vertical_in_place(&mut self.zbuffer)
+        // image::imageops::flip_vertical_in_place(&mut self.zbuffer)
     }
 
     fn save(&self, path: &str) -> Result<(), Box<dyn Error>> {
         self.target.save(path)?;
-        self.zbuffer.save("zbuffer.png")?;
+        // self.zbuffer.save("zbuffer.png")?;
         Ok(())
     }
 
@@ -124,12 +109,11 @@ impl Renderer {
         in_triangle(a, b, c, |x, y, bc| {
             // TODO: WTF?
             let z = a.z() * bc.x() + b.z() * bc.y() + c.z() * bc.z() + 0.5;
-            let z = clamp(z, 0.0, 255.0) as u8;
 
             // if previous pixel put at |x, y| as further away from camera, replace it
-            let prev_z = self.zbuffer.get_pixel_mut(x as u32, y as u32);
-            if prev_z[0] <= z {
-                *prev_z = ZDepth::from([z]);
+            let prev_z = &mut self.zbuffer[x + y * self.target.width() as usize];
+            if *prev_z <= z {
+                *prev_z = z;
 
                 // TODO: WTF?
                 let uv = uv0 * bc.x() + uv1 * bc.y() + uv2 * bc.z();
@@ -147,10 +131,9 @@ impl Renderer {
     fn triangle(&mut self, a: Vec3, b: Vec3, c: Vec3, color: Color) {
         in_triangle(a, b, c, |x, y, bc| {
             let z = a.z() * bc.x() + b.z() * bc.y() + c.z() * bc.z() + 0.5;
-            let z = clamp(z, 0.0, 255.0) as u8;
-            let prev_z = self.zbuffer.get_pixel_mut(x as u32, y as u32);
-            if prev_z[0] <= z {
-                *prev_z = ZDepth::from([z]);
+            let prev_z = &mut self.zbuffer[x  + y * self.target.width() as usize];
+            if *prev_z <= z {
+                *prev_z = z;
                 self.set(x, y, color);
             }
         });
