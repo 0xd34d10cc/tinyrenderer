@@ -35,26 +35,15 @@ fn barycentric(a: Vec2, b: Vec2, c: Vec2, p: Vec2) -> Vec3 {
     vec3(1.0 - (u.x() + u.y()) / u.z(), u.y() / u.z(), u.x() / u.z())
 }
 
-// returns a minumal rectangle around triangle abc
-#[inline(always)]
-fn find_box(a: Vec3, b: Vec3, c: Vec3) -> ((usize, usize), (usize, usize)) {
-    let min_x = min(a.x(), min(b.x(), c.x()));
-    let min_y = min(a.y(), min(b.y(), c.y()));
-
-    let max_x = max(a.x(), max(b.x(), c.x()));
-    let max_y = max(a.y(), max(b.y(), c.y()));
-
-    let min_box = (min_x as usize, min_y as usize);
-    let max_box = (max_x as usize, max_y as usize);
-
-    (min_box, max_box)
-}
-
 fn in_triangle<F>(a: Vec3, b: Vec3, c: Vec3, mut f: F) where F: FnMut(usize, usize, Vec3) {
-    let (min, max) = find_box(a, b, c);
+    let min_x = min(a.x(), min(b.x(), c.x())) as usize;
+    let min_y = min(a.y(), min(b.y(), c.y())) as usize;
 
-    for y in min.1..(max.1 + 1) {
-        for x in min.0..(max.0 + 1) {
+    let max_x = max(a.x(), max(b.x(), c.x())) as usize;
+    let max_y = max(a.y(), max(b.y(), c.y())) as usize;
+
+    for y in min_y..(max_y + 1) {
+        for x in min_x..(max_x + 1) {
             let bc = barycentric(a.truncate(), b.truncate(), c.truncate(), vec2(x as f32, y as f32));
             if bc.x() < 0.0 || bc.y() < 0.0 || bc.z() < 0.0 {
                 continue;
