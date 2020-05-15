@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::time::Instant;
 
 use glam::{vec2, vec3, Vec2, Vec3};
 use wavefront_obj::obj::{self, ObjSet, Primitive, TVertex, Vertex};
@@ -35,7 +36,7 @@ fn barycentric(a: Vec2, b: Vec2, c: Vec2, p: Vec2) -> Vec3 {
     vec3(1.0 - (u.x() + u.y()) / u.z(), u.y() / u.z(), u.x() / u.z())
 }
 
-fn in_triangle<F>(a: Vec3, b: Vec3, c: Vec3, mut f: F) where F: FnMut(usize, usize, Vec3) {
+fn in_triangle<F>(a: Vec2, b: Vec2, c: Vec2, mut f: F) where F: FnMut(usize, usize, Vec3) {
     let min_x = min(a.x(), min(b.x(), c.x())) as usize;
     let min_y = min(a.y(), min(b.y(), c.y())) as usize;
 
@@ -44,7 +45,8 @@ fn in_triangle<F>(a: Vec3, b: Vec3, c: Vec3, mut f: F) where F: FnMut(usize, usi
 
     for y in min_y..(max_y + 1) {
         for x in min_x..(max_x + 1) {
-            let bc = barycentric(a.truncate(), b.truncate(), c.truncate(), vec2(x as f32, y as f32));
+            let p = vec2(x as f32, y as f32);
+            let bc = barycentric(a, b, c, p);
             if bc.x() < 0.0 || bc.y() < 0.0 || bc.z() < 0.0 {
                 continue;
             }
@@ -95,7 +97,10 @@ impl Renderer {
         texture: &Texture,
         intensity: f32,
     ) {
-        in_triangle(a, b, c, |x, y, bc| {
+        let intensity = intensity.sqrt(); // gamma correction
+        let shade = |color: u8| -> u8 { (color as f32 * intensity) as u8 };
+
+        in_triangle(a.truncate(), b.truncate(), c.truncate(), |x, y, bc| {
             // TODO: WTF?
             let z = a.z() * bc.x() + b.z() * bc.y() + c.z() * bc.z() + 0.5;
 
@@ -108,9 +113,9 @@ impl Renderer {
                 let uv = uv0 * bc.x() + uv1 * bc.y() + uv2 * bc.z();
                 let color = *texture.get_pixel(uv.x() as u32, uv.y() as u32);
                 let color = Color::from([
-                    (color[0] as f32 * intensity) as u8,
-                    (color[1] as f32 * intensity) as u8,
-                    (color[2] as f32 * intensity) as u8,
+                    shade(color[0]),
+                    shade(color[1]),
+                    shade(color[2]),
                 ]);
                 self.set(x, y, color);
             }
@@ -118,7 +123,7 @@ impl Renderer {
     }
 
     fn triangle(&mut self, a: Vec3, b: Vec3, c: Vec3, color: Color) {
-        in_triangle(a, b, c, |x, y, bc| {
+        in_triangle(a.truncate(), b.truncate(), c.truncate(), |x, y, bc| {
             let z = a.z() * bc.x() + b.z() * bc.y() + c.z() * bc.z() + 0.5;
             let prev_z = &mut self.zbuffer[x  + y * self.target.width() as usize];
             if *prev_z <= z {
@@ -138,7 +143,7 @@ impl Renderer {
         let width = self.target.width();
         let height = self.target.height();
 
-        let translate3 = |vertex: Vec3| -> Vec3 {
+        let screen_coords = |vertex: Vec3| -> Vec3 {
             // coordinates in obj file are in [-1.0; 1.0] range
             // NOTE: not really, but it's true for african_head.obj
             vec3(
@@ -148,7 +153,7 @@ impl Renderer {
             )
         };
 
-        let translate2 = |vertex: Vec2| -> Vec2 {
+        let texture_coords = |vertex: Vec2| -> Vec2 {
             vec2(
                 vertex.x() * (texture.width() - 1) as f32,
                 vertex.y() * (texture.height() - 1) as f32,
@@ -173,12 +178,12 @@ impl Renderer {
                     let uv1 = to_vec2(texture_vertices[*ty]);
                     let uv2 = to_vec2(texture_vertices[*tz]);
                     self.triangle_texture(
-                        translate3(p1),
-                        translate3(p2),
-                        translate3(p3),
-                        translate2(uv0),
-                        translate2(uv1),
-                        translate2(uv2),
+                        screen_coords(p1),
+                        screen_coords(p2),
+                        screen_coords(p3),
+                        texture_coords(uv0),
+                        texture_coords(uv1),
+                        texture_coords(uv2),
                         texture,
                         intensity,
                     );
@@ -197,9 +202,9 @@ impl Renderer {
 
                 if intensity.is_sign_positive() {
                     self.triangle(
-                        translate3(p1),
-                        translate3(p2),
-                        translate3(p3),
+                        screen_coords(p1),
+                        screen_coords(p2),
+                        screen_coords(p3),
                         color
                     );
                 }
@@ -243,7 +248,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let model = read_model("obj/african_head.obj")?;
     let texture = read_texture("obj/african_head_diffuse.png")?;
+
+    let start = Instant::now();
     renderer.obj(&model, &texture);
+    let elapsed = Instant::now() - start;
+    println!("Render took {:.3} ms", elapsed.as_micros() as f64 / 1_000.0);
 
     renderer.flipv();
     renderer.save("target.png")?;
