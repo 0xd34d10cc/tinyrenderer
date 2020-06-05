@@ -61,7 +61,6 @@ where
 }
 
 struct Camera {
-    lookfrom: Vec3,
     translation: Mat3,
 }
 
@@ -77,7 +76,6 @@ impl Camera {
         let translation = Mat3::from_cols(x_axis, y_axis, z_axis);
 
         Camera {
-            lookfrom,
             translation,
         }
     }
@@ -143,7 +141,7 @@ impl Renderer {
             }
 
             // TODO: WTF?
-            let z = a.z() * bc.x() + b.z() * bc.y() + c.z() * bc.z() + 0.5;
+            let z = a.z() * bc.x() + b .z() * bc.y() + c.z() * bc.z() + 0.5;
 
             // if previous pixel put at |x, y| as further away from camera, replace it
             let prev_z = &mut self.zbuffer[position];
@@ -267,8 +265,8 @@ fn read_texture(path: &str) -> Result<Texture, Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let lookfrom = vec3(0.0, 0.0, -1.0);
     let lookat = vec3(0.0, 0.0, 0.0);
-    let lookfrom = vec3(1.0, 0.0, 1.0);
     let up = vec3(0.0, 1.0, 0.0);
     let camera = Camera::new(lookfrom, lookat, up);
     let mut renderer = Renderer::new(camera, (1024, 1024));
