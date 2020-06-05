@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::time::Instant;
 
-use glam::{vec2, vec3, Vec2, Vec3};
+use glam::{vec2, vec3, Mat3, Vec2, Vec3};
 use wavefront_obj::obj::{self, ObjSet, Primitive, TVertex, Vertex};
 
 type Image = image::RgbImage;
@@ -36,7 +36,11 @@ fn barycentric(a: Vec2, b: Vec2, c: Vec2, p: Vec2) -> Vec3 {
     vec3(1.0 - (u.x() + u.y()) / u.z(), u.y() / u.z(), u.x() / u.z())
 }
 
-fn in_triangle<F>(a: Vec2, b: Vec2, c: Vec2, mut f: F) where F: FnMut(usize, usize, Vec3) {
+// Invoke function f for every point in triangle abc
+fn in_triangle<F>(a: Vec2, b: Vec2, c: Vec2, mut f: F)
+where
+    F: FnMut(usize, usize, Vec3),
+{
     let min_x = min(a.x(), min(b.x(), c.x())) as usize;
     let min_y = min(a.y(), min(b.y(), c.y())) as usize;
 
@@ -56,15 +60,48 @@ fn in_triangle<F>(a: Vec2, b: Vec2, c: Vec2, mut f: F) where F: FnMut(usize, usi
     }
 }
 
+struct Camera {
+    lookfrom: Vec3,
+    translation: Mat3,
+}
+
+impl Camera {
+    fn new(lookfrom: Vec3, lookat: Vec3, up: Vec3) -> Self {
+        // z axis points from the camera
+        let z_axis = (lookat - lookfrom).normalize();
+        // y axis points up
+        let y_axis = up.normalize();
+        // x axis points to the left
+        let x_axis = y_axis.cross(z_axis).normalize();
+        // translation to camera-centric coordinate system (rotation part)
+        let translation = Mat3::from_cols(x_axis, y_axis, z_axis);
+
+        Camera {
+            lookfrom,
+            translation,
+        }
+    }
+
+    // translate point p to camera-centric coordinate system
+    fn translate(&self, point: Vec3) -> Vec3 {
+        self.translation * point //+ self.lookfrom
+    }
+
+    fn direction(&self) -> Vec3 {
+        self.translation.z_axis()
+    }
+}
 
 struct Renderer {
+    camera: Camera,
     target: Image,
     zbuffer: Vec<f32>,
 }
 
 impl Renderer {
-    fn new(width: usize, height: usize) -> Self {
+    fn new(camera: Camera, (width, height): (usize, usize)) -> Self {
         Renderer {
+            camera,
             target: Image::new(width as u32, height as u32),
             zbuffer: vec![std::f32::NEG_INFINITY; width * height],
         }
@@ -72,12 +109,10 @@ impl Renderer {
 
     fn flipv(&mut self) {
         image::imageops::flip_vertical_in_place(&mut self.target);
-        // image::imageops::flip_vertical_in_place(&mut self.zbuffer)
     }
 
     fn save(&self, path: &str) -> Result<(), Box<dyn Error>> {
         self.target.save(path)?;
-        // self.zbuffer.save("zbuffer.png")?;
         Ok(())
     }
 
@@ -101,22 +136,24 @@ impl Renderer {
         let shade = |color: u8| -> u8 { (color as f32 * intensity) as u8 };
 
         in_triangle(a.truncate(), b.truncate(), c.truncate(), |x, y, bc| {
+            let position = x + y * self.target.width() as usize;
+            if position >= self.zbuffer.len() {
+                // this pixel is out of bounds
+                return;
+            }
+
             // TODO: WTF?
             let z = a.z() * bc.x() + b.z() * bc.y() + c.z() * bc.z() + 0.5;
 
             // if previous pixel put at |x, y| as further away from camera, replace it
-            let prev_z = &mut self.zbuffer[x + y * self.target.width() as usize];
+            let prev_z = &mut self.zbuffer[position];
             if *prev_z <= z {
                 *prev_z = z;
 
                 // TODO: WTF?
                 let uv = uv0 * bc.x() + uv1 * bc.y() + uv2 * bc.z();
                 let color = *texture.get_pixel(uv.x() as u32, uv.y() as u32);
-                let color = Color::from([
-                    shade(color[0]),
-                    shade(color[1]),
-                    shade(color[2]),
-                ]);
+                let color = Color::from([shade(color[0]), shade(color[1]), shade(color[2])]);
                 self.set(x, y, color);
             }
         });
@@ -125,12 +162,33 @@ impl Renderer {
     fn triangle(&mut self, a: Vec3, b: Vec3, c: Vec3, color: Color) {
         in_triangle(a.truncate(), b.truncate(), c.truncate(), |x, y, bc| {
             let z = a.z() * bc.x() + b.z() * bc.y() + c.z() * bc.z() + 0.5;
-            let prev_z = &mut self.zbuffer[x  + y * self.target.width() as usize];
+            let prev_z = &mut self.zbuffer[x + y * self.target.width() as usize];
             if *prev_z <= z {
                 *prev_z = z;
                 self.set(x, y, color);
             }
         });
+    }
+
+    fn screen_coords(&self, v: Vec3) -> Vec3 {
+        let r = self.camera.translate(v);
+
+        // coordinates in obj file are in [-1.0; 1.0] range
+        // NOTE: not really, but it's true for african_head.obj
+        let r = (r + Vec3::splat(1.0)) / 2.0; // [-1; 1] => [0; 1]
+        vec3(
+            r.x() * (self.target.width() - 1) as f32,
+            r.y() * (self.target.height() - 1) as f32,
+            r.z() * (self.target.width() + self.target.height() - 2) as f32 / 2.0
+        )
+    }
+
+    // returns UV coordinates for v
+    fn texture_coords(&self, v: TVertex, texture: &Texture) -> Vec2 {
+        vec2(
+            v.u as f32 * (texture.width() - 1) as f32,
+            v.v as f32 * (texture.height() - 1) as f32,
+        )
     }
 
     fn primitive(
@@ -140,75 +198,41 @@ impl Renderer {
         texture_vertices: &[TVertex],
         texture: &Texture,
     ) {
-        let width = self.target.width();
-        let height = self.target.height();
+        let to_vec3 = |v: Vertex| vec3(v.x as f32, v.y as f32, v.z as f32);
 
-        let screen_coords = |vertex: Vec3| -> Vec3 {
-            // coordinates in obj file are in [-1.0; 1.0] range
-            // NOTE: not really, but it's true for african_head.obj
-            vec3(
-                (vertex.x() + 1.0) / 2.0 * (width - 1) as f32,
-                (vertex.y() + 1.0) / 2.0 * (height - 1) as f32,
-                vertex.z(),
-            )
-        };
-
-        let texture_coords = |vertex: Vec2| -> Vec2 {
-            vec2(
-                vertex.x() * (texture.width() - 1) as f32,
-                vertex.y() * (texture.height() - 1) as f32,
-            )
-        };
-
-        let to_vec3 = |p: Vertex| -> Vec3 { vec3(p.x as f32, p.y as f32, p.z as f32) };
-        let to_vec2 = |p: TVertex| -> Vec2 { vec2(p.u as f32, p.v as f32) };
-
-        let light_direction = vec3(0.0, 0.0, -1.0);
-
+        let light_direction = self.screen_coords(self.camera.direction()).normalize();
         match primitive {
             Primitive::Triangle((x, Some(tx), _), (y, Some(ty), _), (z, Some(tz), _)) => {
-                let p1 = to_vec3(vertices[*x]);
-                let p2 = to_vec3(vertices[*y]);
-                let p3 = to_vec3(vertices[*z]);
+                let a = self.screen_coords(to_vec3(vertices[*x]));
+                let b = self.screen_coords(to_vec3(vertices[*y]));
+                let c = self.screen_coords(to_vec3(vertices[*z]));
 
-                let normal = (p3 - p1).cross(p2 - p1).normalize();
-                let intensity = normal.dot(light_direction);
+                // dbg!(vertices[*x], a);
+
+                let normal = (b - a).cross(c - a).normalize();
+                let intensity = max(normal.dot(light_direction), 0.2);
                 if intensity.is_sign_positive() {
-                    let uv0 = to_vec2(texture_vertices[*tx]);
-                    let uv1 = to_vec2(texture_vertices[*ty]);
-                    let uv2 = to_vec2(texture_vertices[*tz]);
-                    self.triangle_texture(
-                        screen_coords(p1),
-                        screen_coords(p2),
-                        screen_coords(p3),
-                        texture_coords(uv0),
-                        texture_coords(uv1),
-                        texture_coords(uv2),
-                        texture,
-                        intensity,
-                    );
+                    let uv0 = self.texture_coords(texture_vertices[*tx], texture);
+                    let uv1 = self.texture_coords(texture_vertices[*ty], texture);
+                    let uv2 = self.texture_coords(texture_vertices[*tz], texture);
+                    self.triangle_texture(a, b, c, uv0, uv1, uv2, texture, intensity);
                 }
             }
             Primitive::Triangle((x, _, _), (y, _, _), (z, _, _)) => {
-                let p1 = to_vec3(vertices[*x]);
-                let p2 = to_vec3(vertices[*y]);
-                let p3 = to_vec3(vertices[*z]);
+                let a = self.screen_coords(to_vec3(vertices[*x]));
+                let b = self.screen_coords(to_vec3(vertices[*y]));
+                let c = self.screen_coords(to_vec3(vertices[*z]));
 
-                let normal = (p3 - p1).cross(p2 - p1).normalize();
+                let normal = (b - a).cross(c - a).normalize();
                 let intensity = normal.dot(light_direction);
 
                 let shade = (0xff as f32 * intensity) as u8;
                 let color = [shade, shade, shade].into();
 
                 if intensity.is_sign_positive() {
-                    self.triangle(
-                        screen_coords(p1),
-                        screen_coords(p2),
-                        screen_coords(p3),
-                        color
-                    );
+                    self.triangle(a, b, c, color);
                 }
-            },
+            }
             _ => todo!(),
         }
     }
@@ -243,16 +267,20 @@ fn read_texture(path: &str) -> Result<Texture, Box<dyn Error>> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let (width, height) = (1024, 1024);
-    let mut renderer = Renderer::new(width, height);
-
+    let lookat = vec3(0.0, 0.0, 0.0);
+    let lookfrom = vec3(1.0, 0.0, 1.0);
+    let up = vec3(0.0, 1.0, 0.0);
+    let camera = Camera::new(lookfrom, lookat, up);
+    let mut renderer = Renderer::new(camera, (1024, 1024));
     let model = read_model("obj/african_head.obj")?;
     let texture = read_texture("obj/african_head_diffuse.png")?;
 
     let start = Instant::now();
     renderer.obj(&model, &texture);
-    let elapsed = Instant::now() - start;
-    println!("Render took {:.3} ms", elapsed.as_micros() as f64 / 1_000.0);
+    println!(
+        "Render took {:.3} ms",
+        start.elapsed().as_micros() as f64 / 1_000.0
+    );
 
     renderer.flipv();
     renderer.save("target.png")?;
