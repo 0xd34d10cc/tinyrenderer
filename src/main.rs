@@ -1,6 +1,6 @@
-use std::error::Error;
 use std::time::Instant;
 
+use anyhow::{anyhow, Context, Result};
 use glam::{vec2, vec3, Mat3, Vec2, Vec3};
 use wavefront_obj::obj::{self, ObjSet, Primitive, TVertex, Vertex};
 
@@ -75,18 +75,12 @@ impl Camera {
         // translation to camera-centric coordinate system (rotation part)
         let translation = Mat3::from_cols(x_axis, y_axis, z_axis);
 
-        Camera {
-            translation,
-        }
+        Camera { translation }
     }
 
     // translate point p to camera-centric coordinate system
     fn translate(&self, point: Vec3) -> Vec3 {
         self.translation * point //+ self.lookfrom
-    }
-
-    fn direction(&self) -> Vec3 {
-        self.translation.z_axis()
     }
 }
 
@@ -109,7 +103,7 @@ impl Renderer {
         image::imageops::flip_vertical_in_place(&mut self.target);
     }
 
-    fn save(&self, path: &str) -> Result<(), Box<dyn Error>> {
+    fn save(&self, path: &str) -> Result<()> {
         self.target.save(path)?;
         Ok(())
     }
@@ -141,7 +135,7 @@ impl Renderer {
             }
 
             // TODO: WTF?
-            let z = a.z() * bc.x() + b .z() * bc.y() + c.z() * bc.z() + 0.5;
+            let z = a.z() * bc.x() + b.z() * bc.y() + c.z() * bc.z() + 0.5;
 
             // if previous pixel put at |x, y| as further away from camera, replace it
             let prev_z = &mut self.zbuffer[position];
@@ -168,17 +162,21 @@ impl Renderer {
         });
     }
 
-    fn screen_coords(&self, v: Vec3) -> Vec3 {
-        let r = self.camera.translate(v);
-
+    fn scale_to_screen(&self, v: Vec3) -> Vec3 {
         // coordinates in obj file are in [-1.0; 1.0] range
         // NOTE: not really, but it's true for african_head.obj
-        let r = (r + Vec3::splat(1.0)) / 2.0; // [-1; 1] => [0; 1]
+        let v = (v + Vec3::splat(1.0)) / 2.0; // [-1; 1] => [0; 1]
         vec3(
-            r.x() * (self.target.width() - 1) as f32,
-            r.y() * (self.target.height() - 1) as f32,
-            r.z() * (self.target.width() + self.target.height() - 2) as f32 / 2.0
+            v.x() * (self.target.width() - 1) as f32,
+            v.y() * (self.target.height() - 1) as f32,
+            // NOTE: this is a hack
+            v.z() * (self.target.width() + self.target.height() - 2) as f32 / 2.0,
         )
+    }
+
+    fn screen_coords(&self, v: Vec3) -> Vec3 {
+        let r = self.camera.translate(v);
+        self.scale_to_screen(r)
     }
 
     // returns UV coordinates for v
@@ -198,14 +196,12 @@ impl Renderer {
     ) {
         let to_vec3 = |v: Vertex| vec3(v.x as f32, v.y as f32, v.z as f32);
 
-        let light_direction = self.screen_coords(self.camera.direction()).normalize();
+        let light_direction = vec3(0.0, 0.0, 1.0);
         match primitive {
             Primitive::Triangle((x, Some(tx), _), (y, Some(ty), _), (z, Some(tz), _)) => {
                 let a = self.screen_coords(to_vec3(vertices[*x]));
                 let b = self.screen_coords(to_vec3(vertices[*y]));
                 let c = self.screen_coords(to_vec3(vertices[*z]));
-
-                // dbg!(vertices[*x], a);
 
                 let normal = (b - a).cross(c - a).normalize();
                 let intensity = max(normal.dot(light_direction), 0.2);
@@ -251,27 +247,27 @@ impl Renderer {
     }
 }
 
-fn read_model(path: &str) -> Result<ObjSet, Box<dyn Error>> {
+fn read_model(path: &str) -> Result<ObjSet> {
     let model = std::fs::read_to_string(path)?;
     let model = obj::parse(&model)
-        .map_err(|e| format!("Failed to parse line #{}: {}", e.line_number, e.message))?;
+        .map_err(|e| anyhow!("Failed to parse line #{}: {}", e.line_number, e.message))?;
     Ok(model)
 }
 
-fn read_texture(path: &str) -> Result<Texture, Box<dyn Error>> {
+fn read_texture(path: &str) -> Result<Texture> {
     let mut texture = image::open(path)?.to_rgb();
     image::imageops::flip_vertical_in_place(&mut texture);
     Ok(texture)
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let lookfrom = vec3(0.0, 0.0, -1.0);
+fn main() -> Result<()> {
+    let lookfrom = vec3(0.5, 0.0, -0.5);
     let lookat = vec3(0.0, 0.0, 0.0);
     let up = vec3(0.0, 1.0, 0.0);
     let camera = Camera::new(lookfrom, lookat, up);
     let mut renderer = Renderer::new(camera, (1024, 1024));
-    let model = read_model("obj/african_head.obj")?;
-    let texture = read_texture("obj/african_head_diffuse.png")?;
+    let model = read_model("obj/african_head.obj").context("Could not read object model")?;
+    let texture = read_texture("obj/african_head_diffuse.png").context("Could not read texture")?;
 
     let start = Instant::now();
     renderer.obj(&model, &texture);
